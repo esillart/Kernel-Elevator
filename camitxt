@@ -1,0 +1,11 @@
+int elevator_proc_release(struct inode *sp_inode, struct file*sp_file){
+  printk(KERN_NOTICE "proc called release\n");
+  kfree(message_1);
+}
+
+
+
+static void elevator_exit(void){
+  remove_proc_entry(ENTRY_NAME, NULL);
+  printk(KERN_NOTICE "removing /proc/%s\n, ENTRY_NAME);
+}
