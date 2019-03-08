@@ -8,5 +8,5 @@ asmlinkage int sys_start_elevator(void) {
 	if (STUB_start_elevator)
 		return STUB_start_elevator();
 	else
-		return -ENOSYS;
+		return -8;
 }

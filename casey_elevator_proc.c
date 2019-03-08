@@ -85,11 +85,11 @@ typedef struct{
 int i;
 
 int started=0;
-int current_floor;
+int next_state;
 int current_passengers;
 int current_weight;
-int passengers_done;
 int total_served;
+
 
 struct list_head allfloors[10];
 struct list_head *pos;
@@ -107,6 +107,7 @@ struct task_struct * elevatorthread;
 
 static struct file_operations fops; /* points to proc file definitions */
 
+int load_elevator(int floor);
 
 
 /* Activates the elevator for service. From that point onward, the elevator exists and will begin to service requests.
@@ -330,40 +331,95 @@ static void elevator_exit(void){
 		return;
 }
 
-static int elevator_init(void){
+int scheduler(void *data){
+	//grab destination of 1st pass on the elevator
+	//compare with current_floor 
+		tmp = list_first_entry(&(e1->onboard_passengers), passengers, list);
+		if(tmp->destination_floor > e1->current_floor)
+		{
+			next_state = UP;
+		}
+		else if( tmp->destination_floor < e1->current_floor)
+		{
+				next_state = DOWN;
+		}
+		else
+		{
+			//dump, increment return
+				list_del(&tmp->list);
+				total_served++;
+				return 0;
+		}
+		while(!kthread_should_stop()){
+				if(e1->state == OFFLINE){
+						// Nothing happens
+				}
+				else if(e1->state == IDLE){
+						//if idle it can load elevator
+						e1->state = LOADING;		
 
-		fops.open = elevator_proc_open;
-		fops.read = proc_read;
-		fops.release = elevator_proc_release;
+				}
+				else if(e1->state == LOADING){
+						//sleep one second
+						ssleep(1);
+						//unload();
+						//unload and increase passengers done counter
 
-		STUB_start_elevator = &start_elevator;
-		STUB_stop_elevator = &stop_elevator;
-		STUB_issue_request = &issue_request;
+						if(started == 1){
+								//if(can_load()){
+								load_elevator(1);
+								//}
 
-		if(!proc_create(ENTRY_NAME, MODPERMISSIONS, NULL, &fops)){
-				printk(KERN_WARNING "ERROR proc create\n");
-				remove_proc_entry(ENTRY_NAME, NULL);
-				return -7;
+						}
+						
+						if(next_state == UP){
+								if(e1->current_floor == 10){
+										e1->state = DOWN;
+										e1->next_floor = e1->current_floor - 1;
+								}
+								else{
+										e1->next_floor = e1->current_floor + 1;
+								}
+								//global_state = next_state;
+						}
+
+						else if(next_state == DOWN){
+								if(e1->current_floor == 1){
+										e1->state = UP;
+										e1->next_floor = e1->current_floor + 1;
+								}
+								else{
+										e1->next_floor = e1->current_floor - 1;
+								}
+
+						}
+				}
+				else if(e1->state == UP){
+						//function to actually move elevator
+						if(e1->current_floor == 10){
+								e1->state = DOWN;
+								e1->next_floor = e1->current_floor - 1;
+						}
+						e1->state = next_state;				
+				}
+
+				else if(e1->state == DOWN){
+						// function actually move elevator
+						if(e1->current_floor == 1){
+								e1->state = UP;
+								e1->next_floor = e1->current_floor + 1;
+						}
+						else{
+								e1->next_floor = e1->current_floor - 1;
+						}
+
+						//implement to check if thread stopped to turn offline
+				}
 		}
 
-		elevatorthread = kthread_run(scheduler, NULL, "Elevator scheduler thread started");
-
-		return 0;
+	return 0;
 }
 
-int move_elevator(int floor){
-		if(floor != current_floor){
-				printk("Now moving floor to %d\n", floor);
-				//sleep elevator
-				ssleep(2);
-				current_floor = floor;
-				return 1;
-		}
-		else{
-				return -1;
-
-		}
-}
 
 /*this function tries to push as many passengers, in order, onto the elevator
  * can probably copy the structure for an unload function
@@ -399,6 +455,51 @@ int load_elevator(int floor)
 	}
 	return 0;
 }
+
+
+
+
+
+
+static int elevator_init(void){
+
+		fops.open = elevator_proc_open;
+		fops.read = proc_read;
+		fops.release = elevator_proc_release;
+
+		STUB_start_elevator = &start_elevator;
+		STUB_stop_elevator = &stop_elevator;
+		STUB_issue_request = &issue_request;
+
+		if(!proc_create(ENTRY_NAME, MODPERMISSIONS, NULL, &fops)){
+				printk(KERN_WARNING "ERROR proc create\n");
+				remove_proc_entry(ENTRY_NAME, NULL);
+				return -ENOMEM;
+		}
+
+		e1->state = IDLE;
+		next_state = UP;
+
+		elevatorthread = kthread_run(scheduler, NULL, "Elevator scheduler thread started");
+
+
+		return 0;
+}
+
+static int move_elevator(int floor){
+		if(floor != e1->current_floor){
+				printk("Now moving floor to %d\n", floor);
+				//sleep elevator
+				ssleep(2);
+				e1->current_floor = floor;
+				return 1;
+		}
+		else{
+				return -1;
+
+		}
+}
+
 
 module_init(elevator_init);
 module_exit(elevator_exit);
