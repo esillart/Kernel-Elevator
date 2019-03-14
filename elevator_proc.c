@@ -325,6 +325,35 @@ int load_elevator(int floor){
 	return 0;
 }
 
+int scheduler(void){
+	printk(KERN_INFO "HERE IN THE SCHEDULER\n");
+
+	if(elevator.state == OFFLINE){
+		printk(KERN_INFO "elevator.state == OFFLINE\n");
+		//drop off people in elevator
+	}
+	
+	else if(elevator.state == IDLE){
+		printk(KERN_INFO "elevator.state == IDLE\n");
+		//load people
+	}
+
+	else if(elevator.state == LOADING){
+		printk(KERN_INFO "elevator.state == LOADING\n");
+		//currently loading or unloading people
+	}
+
+	else if(elevator.state == UP){
+		printk(KERN_INFO "elevator.state == UP\n");
+		//going UP
+	}
+
+	else if(elevator.state == DOWN){	
+		printk(KERN_INFO "elevator.state == DOWN\n");
+		//gping DOWN
+	}
+
+}
 
 
 /******************************************************************************/
