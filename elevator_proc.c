@@ -40,7 +40,7 @@ MODULE_LICENSE("GPL");
 #define BELLHOP 4
 
 #define MAXWEIGHT 30
-
+#define MAXUNITS 10
 /*multiply all weight and maxweight by two
   to account for fractions*/
 
@@ -110,7 +110,7 @@ static int read_p;
 
 int add_passenger(int type, int start_floor, int destination_floor);
 int print_passengers(void);
-int delete_passenger(int type);
+int delete_passenger(void);
 int load_elevator(int floor);
 int print_who_on_it(void);
 /***********************************************************************************/
@@ -259,8 +259,32 @@ int print_who_on_it(void){
 	return 0;
 }
 
-int delete_passenger(int type){
-	//CODE HERE
+int delete_passenger(void){
+	//clear all floors of passengers
+	struct list_head move_list;
+	struct list_head *temp;
+	struct list_head *dummy;
+	Passenger *p;
+	int i;
+	int count = 0;
+
+	INIT_LIST_HEAD(&move_list);
+
+	printk(KERN_INFO "CALLED DELETE_PASSENGER");
+	for(i = 0; i < 10; i++){
+		list_for_each_safe(temp, dummy, &floors[i]){
+			list_move_tail(temp, &move_list);
+			count++;
+		}
+	
+	}
+	list_for_each_safe(temp, dummy, &move_list){
+		p = list_entry(temp , Passenger, list);
+		list_del(temp);
+		kfree(p);
+	}
+	printk(KERN_INFO "deleted %d people\n",count);
+	return 0;
 }
 
 int load_elevator(int floor){
@@ -277,8 +301,25 @@ int load_elevator(int floor){
 		list_for_each_safe(temp,dummy,&floors[floor-1]){
 			p = list_entry(temp, Passenger, list);
 			printk(KERN_INFO "p.type: %d, p.start_floor: %d, p.destination_floor: %d\n",p->type, p->start_floor, p->destination_floor);
-			list_move_tail(&p->list, &elevator.onboard);
-			print_who_on_it();
+		
+			if(p->start_floor == p->destination_floor){
+				total_served++;
+				list_del(&p->list);
+			}
+
+			else if( elevator.current_weight + p->weight_units <= MAXWEIGHT 
+				&& elevator.current_units + p->space_units <= MAXUNITS){
+
+				elevator.current_weight += p->weight_units;
+		   		elevator.current_units += p->space_units;
+
+				list_move_tail(&p->list, &elevator.onboard);
+				print_who_on_it();
+			}
+			else{
+				printk(KERN_INFO "too many people\n");
+				break;
+			}
 		}
 	}
 	return 0;
@@ -355,6 +396,7 @@ static int elevator_init(void){
 		return -ENOMEM;
 	}
 
+	total_served = 0;
 	elevator.current_weight = 0;
 	elevator.current_units = 0;
 	elevator.current_floor = 0;
@@ -372,7 +414,7 @@ module_init(elevator_init);
 static void elevator_exit(void){
 	//not sure about these functions
 	//delete_passenger();	
-
+	delete_passenger();
 	remove_proc_entry(ENTRY_NAME, NULL);
 	printk(KERN_NOTICE "Removing /proc/%s\n", ENTRY_NAME);
 
