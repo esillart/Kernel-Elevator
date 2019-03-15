@@ -629,6 +629,10 @@ ssize_t elevator_proc_read(struct file *sp_file, char __user *buf, size_t size, 
 	int i;
 	int decimal;
 	char buffer[1000];
+
+	int weightSum = 0;
+	int spaceSum = 0;
+
 	struct list_head *temp;
 	struct list_head *dummy;
 	Passenger *p;
@@ -652,14 +656,17 @@ ssize_t elevator_proc_read(struct file *sp_file, char __user *buf, size_t size, 
 	}	
 
 	strcat(message, "\n");
-	strcat(message, "People Waiting");
+	strcat(message, "People Waiting\n");
 	for(i = 0; i < 10; i++){
 		list_for_each_safe(temp, dummy, &floors[i]){
 			p = list_entry(temp, Passenger, list);
-
-			sprintf(buffer, "\ntype: %d start_floor: %d destination_floor: %d", p->type, p->start_floor, p->destination_floor);
-			strcat(message, buffer);
+			weightSum += p->weight_units;
+			spaceSum += p->space_units;
 		}
+		sprintf(buffer, "floor: %d, weight: %d, space: %d\n",i+1,weightSum/2,spaceSum);
+		strcat(message, buffer);
+		spaceSum =0;
+		weightSum = 0;
 	}
 	strcat(message, "\n");
 
@@ -667,6 +674,7 @@ ssize_t elevator_proc_read(struct file *sp_file, char __user *buf, size_t size, 
 
 	len = strlen(message);
 	copy_to_user(buf, message, len);
+	memset(buffer,0,1000);
 	return len;
 }
 
