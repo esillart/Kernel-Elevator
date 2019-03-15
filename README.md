@@ -37,7 +37,8 @@ The project team members' names and division of labor:
 	involved with implementing it that way, so we settled for FIFO as we were running out of time to complete the scheduler. 
 	
 	- We did not run the stress test 
-	- We did however run the versions of producer.c that dispatches one passenger at a time and all passengers at once to each 			floor.
+	- We did however run the versions of producer.c that dispatches one passenger at a time and all passengers at once to
+	  each floor.
 	- There are no unfinished portions of the project. 
 
 
