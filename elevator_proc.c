@@ -93,7 +93,7 @@ int removed_from_floor;
 
 //struct of floors that contains list_head for Passenger types
 struct list_head floors[10];
-int served[10];
+int served[10] = {0,0,0,0,0,0,0,0,0,0};
 
 static struct file_operations fops;
 
@@ -646,12 +646,18 @@ ssize_t elevator_proc_read(struct file *sp_file, char __user *buf, size_t size, 
 			elevator.state, elevator.current_floor, elevator.next_floor, elevator.current_weight/2, decimal, elevator.current_units, total_served);
 
 	strcat(message, "\n");
+	for(i = 0; i < 10; i++){
+		sprintf(buffer, "Served on floor %d:%d\n", i+1, served[i]);
+		strcat(message,buffer);
+	}	
 
+	strcat(message, "\n");
+	strcat(message, "People Waiting");
 	for(i = 0; i < 10; i++){
 		list_for_each_safe(temp, dummy, &floors[i]){
 			p = list_entry(temp, Passenger, list);
 
-			sprintf(buffer, "\nserved on this floor: %d type: %d start_floor: %d destination_floor: %d", served[i],  p->type, p->start_floor, p->destination_floor);
+			sprintf(buffer, "\ntype: %d start_floor: %d destination_floor: %d", p->type, p->start_floor, p->destination_floor);
 			strcat(message, buffer);
 		}
 	}
