@@ -82,7 +82,7 @@ struct{
 
 int i;
 int started = 0;
-
+int odd_children = 0;
 //should this be inside the elevator struct?
 int next_state;
 
@@ -213,7 +213,7 @@ int add_passenger(int type, int start_floor, int destination_floor){
 		p->space_units = 1;
 	}
 	else if(type == CHILD)
-	{
+	{	
 		p->weight_units = 1;
 		p->space_units = 1;
 	}
@@ -340,6 +340,9 @@ int load_elevator(int floor){
 			else if( elevator.current_weight + p->weight_units <= MAXWEIGHT 
 					&& elevator.current_units + p->space_units <= MAXUNITS){
 
+				if(p->type == CHILD)
+					odd_children++;
+
 				elevator.current_weight += p->weight_units;
 				elevator.current_units += p->space_units;
 
@@ -376,7 +379,9 @@ int unload_elevator(int floor){
 			printk(KERN_INFO "Unloading passenger\n");
 			elevator.current_weight -= p->weight_units;
 			elevator.current_units -= p->space_units;
-
+				
+			if(p->type == CHILD)
+				odd_children--;
 			served[floor - 1]++;
 			total_served++;
 			list_del(&p->list);
@@ -468,7 +473,7 @@ int move_elevator(int floor){
 			x = x* -1;
 		}
 
-	
+		elevator.next_floor = floor;	
 		//sleep elevator
 		ssleep(2*x);
 		elevator.current_floor = floor;
@@ -614,7 +619,6 @@ int elevator_proc_open(struct inode *sp_inode, struct file *sp_file){
 	   add_passenger();
 	   */
 
-	//I think this might be causing the cat segfault...
 	//kfree(message);
 
 	return 0;
@@ -623,6 +627,7 @@ int elevator_proc_open(struct inode *sp_inode, struct file *sp_file){
 ssize_t elevator_proc_read(struct file *sp_file, char __user *buf, size_t size, loff_t *offset){
 	int len;
 	int i;
+	int decimal;
 	char buffer[1000];
 	struct list_head *temp;
 	struct list_head *dummy;
@@ -632,8 +637,13 @@ ssize_t elevator_proc_read(struct file *sp_file, char __user *buf, size_t size, 
 	if(read_p)
 		return 0;
 
-	sprintf(message, "\nSTATE: %d\nCurrent floor: %d\nNext floor: %d\nWeight units: %d\nPassenger units: %d\nTotal serviced: %d\n",
-			elevator.state, elevator.current_floor, elevator.next_floor, elevator.current_weight, elevator.current_units, total_served);
+	if(odd_children % 2 == 0 && odd_children >= 0)
+		decimal = 0;
+	else
+		decimal = 5;
+
+	sprintf(message, "\nSTATE: %d\nCurrent floor: %d\nNext floor: %d\nWeight units: %d.%d\nPassenger units: %d\nTotal serviced: %d\n",
+			elevator.state, elevator.current_floor, elevator.next_floor, elevator.current_weight/2, decimal, elevator.current_units, total_served);
 
 	strcat(message, "\n");
 
