@@ -15,3 +15,6 @@ The project team members' names and division of labor:
 
 •Special considerations or anything I should know when grading your solution◦Any completed extra credit must be documented in the README to receive credit:
 
+- UNKNOWN SPECIFICS ABOUT WHAT YOU MEANT FOR "sleep between loading" we assumed you meant sleep 2 at each individual floor.
+  -We assumed you meant the total serviced based on the floor they got off not the floor they started on.
+
