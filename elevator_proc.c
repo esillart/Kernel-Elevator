@@ -33,6 +33,7 @@ MODULE_LICENSE("GPL");
 #define LOADING 2
 #define UP 3
 #define DOWN 4
+#define EQUAL 5
 
 #define ADULT 1
 #define CHILD 2
@@ -59,6 +60,7 @@ typedef struct passenger{
 	int start_floor;
 	int destination_floor;
 	int type;
+	int state;
 
 	struct list_head list;
 } Passenger;
@@ -66,7 +68,11 @@ typedef struct passenger{
 struct{
 	int current_weight;
 	int current_units;
+
+	int previous_state;
 	int state;
+	int next_state;
+
 	int current_floor;
 	int next_floor;
 
@@ -87,7 +93,7 @@ int removed_from_floor;
 
 //struct of floors that contains list_head for Passenger types
 struct list_head floors[10];
-
+int served[10];
 
 static struct file_operations fops;
 
@@ -97,22 +103,25 @@ struct list_head *pos;
 static char *message;
 static int read_p;
 
-/*  UNCOMMENT THIS LATER WHEN WE GET TO THREADS
-	struct thread_parameter {
+struct thread_parameter {
 	int id;
-	int cnt;
 	struct task_struct *kthread;
-	};
+	struct mutex mutex;
+};
 
-	struct thread_parameter thread1;
-	*/
+struct thread_parameter thread1;
 
-
+//prototypes
 int add_passenger(int type, int start_floor, int destination_floor);
 int print_passengers(void);
 int delete_passenger(void);
 int load_elevator(int floor);
+int unload_elevator(int floor);
+int move_elevator(int floor);
+int min_onboard(void);
+int min_floor(int floor);
 int print_who_on_it(void);
+int scheduler(void *data);
 /***********************************************************************************/
 
 
@@ -138,6 +147,9 @@ int stop_elevator(void){
 	printk(KERN_INFO "CALLED STOP ELEVATOR");
 
 	if(started == 1){
+		if(elevator.state == UP || elevator.state == DOWN){
+			elevator.previous_state = elevator.state;
+		}
 		elevator.state = OFFLINE;
 		started = 0;
 
@@ -165,13 +177,18 @@ int issue_request(int passenger_type, int start_floor, int destination_floor){
 	else{
 		add_passenger(passenger_type, start_floor, destination_floor);
 
-		//put here for testing only
-		load_elevator(1);
-
 		return 0;
 	}
 }
 
+/******************************************************************************/
+
+void thread_init_parameter(struct thread_parameter *parm) {
+	static int id = 1;
+	parm->id = id++;
+	mutex_init(&parm->mutex);
+	parm->kthread = kthread_run(scheduler, parm, "Scheduler thread %d", parm->id);
+}
 
 /*******************************************************************************/
 
@@ -214,6 +231,15 @@ int add_passenger(int type, int start_floor, int destination_floor){
 		return -1;
 	}
 
+	if(start_floor - destination_floor > 0)
+		p->state = DOWN;
+
+	else if(start_floor - destination_floor < 0)
+		p->state = UP;
+
+	else
+		p->state = EQUAL;
+
 	//may have to surround this with locks later
 	list_add_tail(&p->list, &floors[start_floor - 1]);
 
@@ -235,7 +261,7 @@ int print_passengers(void){
 		list_for_each(temp, &floors[i]){       //iterate through nodes of list
 
 			p = list_entry(temp, Passenger, list);//list_entry gets you the struct the list is in. 
-			printk("type: %d, start: %d, destination: %d\n", p->type, p->start_floor, p->destination_floor);
+			printk("type: %d, start: %d, destination: %d, state: %d\n", p->type, p->start_floor, p->destination_floor, p->state);
 		}
 	}
 	return 0;
@@ -276,7 +302,7 @@ int delete_passenger(void){
 			list_move_tail(temp, &move_list);
 			count++;
 		}
-	
+
 	}
 	list_for_each_safe(temp, dummy, &move_list){
 		p = list_entry(temp , Passenger, list);
@@ -298,61 +324,275 @@ int load_elevator(int floor){
 	}
 	else{
 		printk(KERN_INFO "LOAD_ELEVATOR\n");	
+		if(list_empty(&floors[floor-1]))
+			return -1;
+
 		list_for_each_safe(temp,dummy,&floors[floor-1]){
 			p = list_entry(temp, Passenger, list);
 			printk(KERN_INFO "p.type: %d, p.start_floor: %d, p.destination_floor: %d\n",p->type, p->start_floor, p->destination_floor);
-		
-			if(p->start_floor == p->destination_floor){
+
+			if(p->state == EQUAL){
+				served[floor-1]++;
 				total_served++;
 				list_del(&p->list);
 			}
 
 			else if( elevator.current_weight + p->weight_units <= MAXWEIGHT 
-				&& elevator.current_units + p->space_units <= MAXUNITS){
+					&& elevator.current_units + p->space_units <= MAXUNITS){
 
 				elevator.current_weight += p->weight_units;
-		   		elevator.current_units += p->space_units;
+				elevator.current_units += p->space_units;
 
 				list_move_tail(&p->list, &elevator.onboard);
 				print_who_on_it();
 			}
+			else if(elevator.current_weight + p->weight_units > MAXWEIGHT || elevator.current_units + p->space_units > MAXUNITS ){
+				printk(KERN_INFO "people do not fit correctly\n");
+				return -1;
+			}
 			else{
-				printk(KERN_INFO "too many people\n");
-				break;
+				printk(KERN_INFO "no one\n");
+				return -1;
 			}
 		}
 	}
 	return 0;
 }
 
-int scheduler(void){
+int unload_elevator(int floor){
+
+	struct list_head *temp;
+	struct list_head *dummy;
+	Passenger *p;
+
+	if(elevator.current_floor != floor){
+		printk(KERN_WARNING "floor and current_floor do not match\n");
+		return -1;
+	}
+
+	list_for_each_safe(temp,dummy,&elevator.onboard){
+		p = list_entry(temp, Passenger, list);
+		if(p->destination_floor == floor){
+			printk(KERN_INFO "Unloading passenger\n");
+			elevator.current_weight -= p->weight_units;
+			elevator.current_units -= p->space_units;
+
+			served[floor - 1]++;
+			total_served++;
+			list_del(&p->list);
+			print_who_on_it();
+		}
+	}
+
+	return 0;
+}
+
+int scheduler(void *data){
+	int i;
+	Passenger *p;
+	struct thread_parameter *parm = data;
 	printk(KERN_INFO "HERE IN THE SCHEDULER\n");
 
-	if(elevator.state == OFFLINE){
-		printk(KERN_INFO "elevator.state == OFFLINE\n");
-		//drop off people in elevator
+	while (!kthread_should_stop()) {
+		if(elevator.state == OFFLINE){
+			//			printk(KERN_INFO "elevator.state == OFFLINE\n");
+
+			if (mutex_lock_interruptible(&parm->mutex) == 0){
+				while(!list_empty(&elevator.onboard)){
+					move_elevator(min_onboard());			
+					unload_elevator(elevator.current_floor);
+				}
+			}
+			mutex_unlock(&parm->mutex);
+			//drop off people in elevator
+			//when empty, stop.
+		}
+		else if(elevator.state == IDLE){
+			for(i = 0; i < 10; i++){
+				if(!list_empty(&floors[i])){
+					p = list_first_entry(&floors[i],Passenger,list);
+					move_elevator(p->start_floor);
+					elevator.state = LOADING;
+				}
+			}		
+		}
+
+		else{
+
+
+			if (mutex_lock_interruptible(&parm->mutex) == 0){
+				elevator.state = LOADING;
+				unload_elevator(elevator.current_floor);
+				ssleep(1);
+				load_elevator(elevator.current_floor);	
+				elevator.state = UP;
+			}
+			mutex_unlock(&parm->mutex);
+
+			if(elevator.state == UP){
+				if (mutex_lock_interruptible(&parm->mutex) == 0){
+					if(elevator.current_floor == 10)
+						move_elevator(1);
+					else
+						move_elevator(elevator.current_floor+1);
+				}
+				mutex_unlock(&parm->mutex);
+			}
+
+			if (elevator.state == DOWN){
+				if (mutex_lock_interruptible(&parm->mutex) == 0){
+					if(elevator.current_floor ==  1)
+						elevator.state = UP;
+					else
+						move_elevator(elevator.current_floor-1);
+					mutex_unlock(&parm->mutex);
+				}
+			}	
+
+			if(list_empty(&elevator.onboard)){
+				elevator.state = IDLE;
+			}
+
+		}
 	}
+		return 0;
+}
+
+int move_elevator(int floor){
+	if(floor != elevator.current_floor){
+		int x;
+		printk("Now moving floor to %d\n", floor);
+
+		x = elevator.current_floor- floor;
+		if(x<0){
+			x = x* -1;
+		}
+
 	
-	else if(elevator.state == IDLE){
-		printk(KERN_INFO "elevator.state == IDLE\n");
-		//load people
+		//sleep elevator
+		ssleep(2*x);
+		elevator.current_floor = floor;
+		return 1;
+	}
+	else{
+		return -1;
+	}
+}
+
+int min_floor(int floor){
+
+	int minDiff = 10;
+	int minFloor = 0;
+	int tempNum;
+	int i;
+	struct list_head *temp;
+	struct list_head *dummy;
+	Passenger *p;
+
+
+	printk(KERN_INFO "in min_floor function...\n");
+
+	for(i = 0; i < 10; i++){
+		list_for_each_safe(temp, dummy, &floors[i]){
+			p = list_first_entry(temp, Passenger, list);
+			if((elevator.previous_state == p->state)
+					&& (elevator.previous_state == UP)
+					&& (elevator.current_weight + p->weight_units <= MAXWEIGHT)
+					&& (elevator.current_units + p->space_units <= MAXUNITS)){
+
+				tempNum = p->start_floor - elevator.current_floor;
+				if(tempNum < minDiff){
+					minDiff = tempNum;
+					minFloor = p->start_floor;
+				}
+			}
+
+			else if((elevator.previous_state == p->state)
+					&& (elevator.previous_state == DOWN)
+					&& (elevator.current_weight + p->weight_units <= MAXWEIGHT)
+					&& (elevator.current_units + p->space_units <= MAXUNITS)){
+
+				tempNum =  elevator.current_floor - p->start_floor;
+				if(tempNum < minDiff){
+					minDiff = tempNum;
+					minFloor = p->start_floor;
+				}
+			}
+			else if((elevator.previous_state != UP) && (elevator.previous_state != DOWN)
+					&& (elevator.current_weight + p->weight_units <= MAXWEIGHT)
+					&& (elevator.current_units + p->space_units <= MAXUNITS)){
+				
+				printk(KERN_INFO "previous elevator state wasn't UP or DOWN\n");
+
+				//this passenger is below the elevator
+				if(p->start_floor < elevator.current_floor){
+					printk(KERN_INFO "passenger is below the elevator\n");
+					printk(KERN_INFO "p->start floor is: %d and ele.current_floor is: %d\n",
+						       p->start_floor, elevator.current_floor);
+					tempNum = elevator.current_floor - p->start_floor;
+					elevator.state = DOWN;
+				}//this one is above
+				else{
+					printk(KERN_INFO "passenger is above the elevator\n");
+					printk(KERN_INFO "p->start floor is: %d and ele.current_floor is: %d\n",
+						       p->start_floor, elevator.current_floor);
+					tempNum = p->start_floor - elevator.current_floor;
+					elevator.state = UP;
+				}
+				if(tempNum < minDiff){
+					minDiff = tempNum;
+					minFloor = p->start_floor;
+				}
+			}
+		}
+	}
+	printk(KERN_INFO "returning minFloor value (in min_floor) is: %d\n", minFloor);
+	return minFloor;
+}
+
+
+
+int min_onboard(void){
+	int minDiff = 10;
+	int minFloor = 0;
+	int tempNum;
+	struct list_head *temp;
+	struct list_head *dummy;
+	Passenger *p;
+
+	printk(KERN_INFO "CALLING min_onboard\n");
+	if(elevator.previous_state == UP){
+		list_for_each_safe(temp, dummy, &elevator.onboard){
+			p = list_entry(temp, Passenger, list);
+			tempNum = p->destination_floor - elevator.current_floor;
+
+			//found a closer floor in the up direction
+			if(tempNum < minDiff){
+				minDiff = tempNum;
+				minFloor = p->destination_floor;
+			}
+		}
 	}
 
-	else if(elevator.state == LOADING){
-		printk(KERN_INFO "elevator.state == LOADING\n");
-		//currently loading or unloading people
+	else if(elevator.previous_state == DOWN){
+		list_for_each_safe(temp, dummy, &elevator.onboard){
+			p = list_entry(temp, Passenger, list);
+			tempNum = elevator.current_floor - p->destination_floor;
+
+			//found a closer floor in the down direction
+			if(tempNum < minDiff){
+				minDiff = tempNum;
+				minFloor = p->destination_floor;
+			}
+		}
 	}
 
-	else if(elevator.state == UP){
-		printk(KERN_INFO "elevator.state == UP\n");
-		//going UP
+	else{
+		return -1;
 	}
 
-	else if(elevator.state == DOWN){	
-		printk(KERN_INFO "elevator.state == DOWN\n");
-		//gping DOWN
-	}
-
+	printk(KERN_INFO "returning minFloor value (in min_onboard) is: %d\n", minFloor);
+	return minFloor;
 }
 
 
@@ -382,6 +622,11 @@ int elevator_proc_open(struct inode *sp_inode, struct file *sp_file){
 
 ssize_t elevator_proc_read(struct file *sp_file, char __user *buf, size_t size, loff_t *offset){
 	int len;
+	int i;
+	char buffer[1000];
+	struct list_head *temp;
+	struct list_head *dummy;
+	Passenger *p;
 
 	read_p = !read_p;
 	if(read_p)
@@ -390,17 +635,29 @@ ssize_t elevator_proc_read(struct file *sp_file, char __user *buf, size_t size, 
 	sprintf(message, "\nSTATE: %d\nCurrent floor: %d\nNext floor: %d\nWeight units: %d\nPassenger units: %d\nTotal serviced: %d\n",
 			elevator.state, elevator.current_floor, elevator.next_floor, elevator.current_weight, elevator.current_units, total_served);
 
-	printk(KERN_INFO "proc called read\n");	
-	len = strlen(message);
+	strcat(message, "\n");
 
+	for(i = 0; i < 10; i++){
+		list_for_each_safe(temp, dummy, &floors[i]){
+			p = list_entry(temp, Passenger, list);
+
+			sprintf(buffer, "\nserved on this floor: %d type: %d start_floor: %d destination_floor: %d", served[i],  p->type, p->start_floor, p->destination_floor);
+			strcat(message, buffer);
+		}
+	}
+	strcat(message, "\n");
+
+	printk(KERN_INFO "proc called read\n");	
+
+	len = strlen(message);
 	copy_to_user(buf, message, len);
 	return len;
 }
 
+
 int elevator_proc_release(struct inode *sp_inode, struct file *sp_file){
 	printk(KERN_NOTICE "proc called release\n");
 	kfree(message);
-
 	return 0;
 }
 
@@ -425,11 +682,19 @@ static int elevator_init(void){
 		return -ENOMEM;
 	}
 
+	thread_init_parameter(&thread1);
+	if (IS_ERR(thread1.kthread)) {
+		printk(KERN_WARNING "error spawning thread");
+		remove_proc_entry(ENTRY_NAME, NULL);
+		return PTR_ERR(thread1.kthread);
+	}	
+
 	total_served = 0;
 	elevator.current_weight = 0;
 	elevator.current_units = 0;
 	elevator.current_floor = 0;
 	elevator.next_floor =  0;
+	elevator.state = OFFLINE;
 	INIT_LIST_HEAD(&elevator.onboard);
 
 	for(i = 0; i < 10; i++){
@@ -443,7 +708,9 @@ module_init(elevator_init);
 static void elevator_exit(void){
 	//not sure about these functions
 	//delete_passenger();	
+	kthread_stop(thread1.kthread);
 	delete_passenger();
+	mutex_destroy(&thread1.mutex);
 	remove_proc_entry(ENTRY_NAME, NULL);
 	printk(KERN_NOTICE "Removing /proc/%s\n", ENTRY_NAME);
 
